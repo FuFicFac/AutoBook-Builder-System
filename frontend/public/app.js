@@ -465,6 +465,13 @@ function setTurnProgress(percent) {
   const shown = Math.round(clamped);
   const visiblePercent = Math.max(2, shown);
   el.turnProgressCircle.style.strokeDasharray = `${visiblePercent} 100`;
+  if (shown < 45) {
+    el.turnProgressCircle.style.stroke = "#2aa7ff";
+  } else if (shown < 80) {
+    el.turnProgressCircle.style.stroke = "#69be28";
+  } else {
+    el.turnProgressCircle.style.stroke = "#e63946";
+  }
   el.turnProgressText.textContent = `${shown}%`;
 }
 
