@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Auto Book Builder</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header>
+        <h1>Auto Book Builder</h1>
+        <p>Voice-first story intake with Codex CLI as the local brain.</p>
+      </header>
+
+      <section class="panel">
+        <h2>Start Your Story Session</h2>
+        <div class="hero">
+          <div class="mic-stage">
+            <button id="micBtn" type="button" class="mic-orb" aria-label="Toggle microphone">
+              <img id="micHeroImage" class="mic-photo" alt="Microphone" />
+              <span id="micGlyph" class="mic-glyph">🎙</span>
+              <span class="voice-bars" aria-hidden="true">
+                <i></i><i></i><i></i><i></i>
+              </span>
+            </button>
+            <label class="hero-upload">
+              Use Your Mic Image
+              <input id="micImageQuick" type="file" accept="image/*" />
+            </label>
+            <p class="muted">Tap the mic and talk your story out loud.</p>
+          </div>
+          <div class="actions hero-primary-actions">
+            <button id="startSessionBtn" type="button">Start Session</button>
+            <button id="evaluateBtn" type="button" class="secondary">Run Evaluation</button>
+            <button id="exportSessionBtn" type="button" class="secondary">
+              Export Intake + Dossier Draft
+            </button>
+          </div>
+          <div class="hero-actions">
+            <div class="model-bar">
+              <label>
+                Active Model
+                <input id="model" type="text" placeholder="gpt-5.3-codex" />
+              </label>
+              <label>
+                Quick Pick
+                <select id="modelPreset"></select>
+              </label>
+              <button id="applyModelPresetBtn" type="button" class="secondary">Switch Model</button>
+            </div>
+            <p id="sessionMeta" class="muted">No active session.</p>
+            <div id="conversationLog" class="conversation-log"></div>
+            <label>
+              Message
+              <textarea
+                id="conversationInput"
+                rows="4"
+                placeholder="Talk or type your story idea here..."
+              ></textarea>
+            </label>
+            <div class="actions">
+              <label class="inline">
+                <input id="autoSendVoice" type="checkbox" />
+                Auto-send voice turns
+              </label>
+              <button id="sendConversationBtn" type="button">Send Message</button>
+              <button id="forceSendBtn" type="button" class="secondary">Force Send Now</button>
+            </div>
+            <div id="turnProgress" class="turn-progress hidden" aria-live="polite">
+              <svg viewBox="0 0 42 42" class="turn-progress-ring" role="img" aria-label="Turn progress">
+                <circle class="ring-bg" cx="21" cy="21" r="15.915"></circle>
+                <circle id="turnProgressCircle" class="ring-fg" cx="21" cy="21" r="15.915"></circle>
+              </svg>
+              <span id="turnProgressText">0%</span>
+            </div>
+            <p id="status"></p>
+          </div>
+        </div>
+      </section>
+
+      <details class="panel advanced-panel">
+        <summary>Advanced Workspace</summary>
+
+        <section class="subpanel">
+          <h2>Runtime Settings</h2>
+          <div class="grid">
+            <label>
+              Skills Directory
+              <div class="path-field">
+                <input id="skillsDir" type="text" />
+                <button id="browseSkillsDirBtn" type="button" class="secondary">Choose</button>
+              </div>
+            </label>
+            <label>
+              Workspace (cwd)
+              <div class="path-field">
+                <input id="cwd" type="text" />
+                <button id="browseCwdBtn" type="button" class="secondary">Choose</button>
+              </div>
+            </label>
+            <label>
+              Model (optional)
+              <input id="modelMirror" type="text" placeholder="o3 / gpt-5-codex" />
+            </label>
+            <label class="inline">
+              <input id="includeSystem" type="checkbox" />
+              Include `.system` skills
+            </label>
+            <label>
+              Mic Hero Image
+              <input id="micImageFile" type="file" accept="image/*" />
+            </label>
+          </div>
+          <div class="grid">
+            <label>
+              Export Folder
+              <div class="path-field">
+                <input id="exportDir" type="text" placeholder="/path/to/project/output" />
+                <button id="browseExportDirBtn" type="button" class="secondary">Choose</button>
+              </div>
+            </label>
+            <div></div>
+          </div>
+          <div class="actions">
+            <button id="refreshSkillsBtn" type="button">Refresh Skills</button>
+          </div>
+        </section>
+
+        <section class="subpanel">
+          <h2>Skills</h2>
+          <div id="skillsList" class="skills-list"></div>
+        </section>
+
+        <section class="subpanel">
+          <h2>Story Intake</h2>
+          <div class="grid">
+            <label>
+              Story Title
+              <input id="storyTitle" type="text" placeholder="Working title" />
+            </label>
+            <label>
+              Genre
+              <input id="storyGenre" type="text" placeholder="Genre / subgenre" />
+            </label>
+            <label>
+              Tone
+              <input id="storyTone" type="text" placeholder="Tone keywords" />
+            </label>
+            <div></div>
+          </div>
+          <label>
+            Concept
+            <textarea id="storyConcept" rows="4" placeholder="Core premise and conflict"></textarea>
+          </label>
+          <label>
+            Notes
+            <textarea id="storyNotes" rows="4" placeholder="Characters, constraints, must-haves"></textarea>
+          </label>
+          <div class="actions">
+            <button id="buildPromptBtn" type="button">Build Prompt From Intake</button>
+            <button id="saveIntakeBtn" type="button" class="secondary">Save STORY_INTAKE.md</button>
+          </div>
+        </section>
+
+        <section class="subpanel">
+          <h2>File Upload</h2>
+          <div class="grid">
+            <label>
+              Target Subfolder
+              <input id="targetDir" type="text" value="uploads" />
+            </label>
+            <div></div>
+          </div>
+          <label>
+            Files
+            <input
+              id="fileInput"
+              type="file"
+              multiple
+              accept=".md,.txt,.pdf,.docx,.json,.yaml,.yml,.csv,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            />
+          </label>
+          <div class="actions">
+            <button id="uploadBtn" type="button">Upload To Workspace</button>
+          </div>
+          <div id="uploadedFiles" class="uploaded-files"></div>
+        </section>
+
+        <section class="subpanel">
+          <h2>Run Task</h2>
+          <label>
+            Prompt
+            <textarea id="userPrompt" rows="8" placeholder="What should Codex do?"></textarea>
+          </label>
+          <div class="actions">
+            <label class="inline">
+              <input id="dryRun" type="checkbox" />
+              Dry run (no Codex execution)
+            </label>
+            <button id="runBtn" type="button">Run Selected Skills</button>
+          </div>
+        </section>
+
+        <section class="subpanel">
+          <h2>Jobs</h2>
+          <div id="jobsList" class="jobs-list"></div>
+        </section>
+
+        <section class="subpanel">
+          <h2>Job Output</h2>
+          <pre id="jobOutput">No job selected.</pre>
+        </section>
+      </details>
+
+      <div id="sessionResetModal" class="modal hidden" role="dialog" aria-modal="true">
+        <div class="modal-card">
+          <h2>Start New Session?</h2>
+          <p>
+            You already have an active session. Starting a new session will reset the current one in this UI.
+            Export before reset if you want to keep the current intake snapshot.
+          </p>
+          <div class="actions">
+            <button id="resetCancelBtn" type="button" class="secondary">Cancel</button>
+            <button id="resetOnlyBtn" type="button" class="secondary">Reset Without Export</button>
+            <button id="resetExportMdBtn" type="button">Export MD + Reset</button>
+            <button id="resetExportDocxBtn" type="button">Export DOCX + Reset</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="sessionStartModal" class="modal hidden" role="dialog" aria-modal="true">
+        <div class="modal-card">
+          <h2>Session Location</h2>
+          <p class="muted">Is this where you want this session and its files to live?</p>
+          <p id="sessionStartPath" class="path-preview"></p>
+          <div class="actions">
+            <button id="startUseCurrentBtn" type="button">Use This Folder + Start</button>
+            <button id="startChooseWorkspaceBtn" type="button" class="secondary">Choose Different Folder</button>
+            <button id="startCancelBtn" type="button" class="secondary">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="modelSetupModal" class="modal hidden" role="dialog" aria-modal="true">
+        <div class="modal-card">
+          <h2>Model Setup</h2>
+          <p id="modelSetupText" class="muted"></p>
+          <div class="actions">
+            <button id="useDetectedModelBtn" type="button">Use Detected Model</button>
+            <button id="keepCurrentModelBtn" type="button" class="secondary">Keep Current</button>
+          </div>
+        </div>
+      </div>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>
