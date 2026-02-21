@@ -73,8 +73,8 @@ const el = {
 };
 
 const defaults = {
-  skillsDir: "/Users/lastresort/codex/skills",
-  cwd: "/Volumes/New Home/Crucial Backup /Codex/Gassian-Blender-MCP",
+  skillsDir: "",
+  cwd: "",
   model: "gpt-5.3-codex"
 };
 
@@ -711,6 +711,15 @@ async function loadSkills() {
   setStatus(`Loaded ${data.skills.length} skills.`);
 }
 
+async function loadDefaults() {
+  const res = await fetch("/api/defaults");
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Failed to load defaults");
+  defaults.skillsDir = String(data.skillsDir || defaults.skillsDir || "");
+  defaults.cwd = String(data.workspace || defaults.cwd || "");
+  defaults.model = String(data.model || defaults.model || "gpt-5.3-codex");
+}
+
 async function loadModels(showSetupPrompt = false) {
   const res = await fetch("/api/models");
   const data = await res.json();
@@ -963,6 +972,14 @@ async function uploadFiles() {
 
 async function refreshAll() {
   try {
+    await loadDefaults();
+    if (!el.skillsDir.value.trim()) el.skillsDir.value = defaults.skillsDir;
+    if (!el.cwd.value.trim()) el.cwd.value = defaults.cwd;
+    if (!el.exportDir.value.trim()) el.exportDir.value = defaults.cwd;
+    if (!el.model.value.trim()) {
+      el.model.value = defaults.model;
+      syncModelInputs("model");
+    }
     await loadSkills();
     await loadModels(true);
     await loadJobs();
@@ -1234,11 +1251,11 @@ setInterval(async () => {
   }
 }, 3000);
 
-el.skillsDir.value = defaults.skillsDir;
-el.cwd.value = defaults.cwd;
+el.skillsDir.value = "";
+el.cwd.value = "";
 el.model.value = defaults.model;
 syncModelInputs("model");
-el.exportDir.value = defaults.cwd;
+el.exportDir.value = "";
 const savedMicImage = localStorage.getItem("micHeroImageDataUrl") || "";
 if (savedMicImage) applyMicHeroImage(savedMicImage);
 const savedAutoSend = localStorage.getItem("autoSendVoice") === "1";

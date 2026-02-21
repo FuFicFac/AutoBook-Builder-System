@@ -27,7 +27,7 @@ Repository-ready documentation package for deploying and operating a local AI-as
 ## Frontend Prerequisites (For Humans or AI Setup Agents)
 1. Node.js 18+ and npm installed.
 2. Codex CLI installed and authenticated locally.
-3. Local skill directory present (`/Users/lastresort/codex/skills` by default).
+3. Local skill directory present (`~/codex/skills` by default, auto-detected).
 4. Browser microphone permission granted for voice intake.
 5. Run and verify:
    - `cd frontend`
