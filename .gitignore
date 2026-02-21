@@ -12,3 +12,6 @@ __pycache__/
 
 # Node
 node_modules/
+
+# Local launcher runtime
+.runtime/

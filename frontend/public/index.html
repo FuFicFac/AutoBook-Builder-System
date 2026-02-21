@@ -32,10 +32,19 @@
           </div>
           <div class="actions hero-primary-actions">
             <button id="startSessionBtn" type="button">Start Session</button>
+            <button id="launchAbbBtn" type="button">Launch Auto Book Builder</button>
             <button id="evaluateBtn" type="button" class="secondary">Run Evaluation</button>
             <button id="exportSessionBtn" type="button" class="secondary">
               Export Intake + Dossier Draft
             </button>
+            <button id="masterSaveBtn" type="button" class="secondary">Master Save</button>
+          </div>
+          <div id="evalProgress" class="turn-progress hidden" aria-live="polite">
+            <svg viewBox="0 0 42 42" class="turn-progress-ring" role="img" aria-label="Evaluation progress">
+              <circle class="ring-bg" cx="21" cy="21" r="15.915"></circle>
+              <circle id="evalProgressCircle" class="ring-fg" cx="21" cy="21" r="15.915"></circle>
+            </svg>
+            <span id="evalProgressText">Evaluating 0%</span>
           </div>
           <div class="hero-actions">
             <div class="model-bar">

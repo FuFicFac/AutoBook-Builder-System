@@ -35,6 +35,15 @@ Repository-ready documentation package for deploying and operating a local AI-as
    - `npm run start`
    - open `http://127.0.0.1:8787`
 
+## One-Click Local Launcher (macOS)
+- Launcher docs: `docs/LOCAL_LAUNCHER_SETUP.md`
+- Start: `./launchers/macos/AutoBookBuilder.command`
+- Stop: `./launchers/macos/StopAutoBookBuilder.command`
+- Status: `./scripts/status-autobook.sh`
+
+First-time setup:
+- `chmod +x scripts/*.sh launchers/macos/*.command`
+
 ## Intended Audience
 - No-code / low-code operators using Codex/Claude Code-style agents.
 - Technical collaborators implementing or maintaining pipeline behavior.

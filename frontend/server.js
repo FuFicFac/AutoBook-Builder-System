@@ -18,6 +18,9 @@ app.use(express.static(path.join(process.cwd(), "public")));
 const DEFAULT_SKILLS_DIR = "/Users/lastresort/codex/skills";
 const DEFAULT_WORKSPACE = "/Volumes/New Home/Crucial Backup /Codex/Gassian-Blender-MCP";
 const MAX_LOG_CHARS = 250000;
+const MAX_SESSION_MESSAGES = 16;
+const MAX_RETRIEVED_SNIPPETS = 8;
+const MAX_LOG_SCAN_CHARS = 350000;
 const jobs = new Map();
 const sessions = new Map();
 const HIDDEN_SKILLS = new Set([
@@ -98,6 +101,11 @@ function summarizeMessages(messages, limit = 12) {
     .join("\n\n");
 }
 
+function trimForPrompt(text, max = 900) {
+  const value = String(text || "");
+  return value.length > max ? `${value.slice(0, max)} ...[truncated]` : value;
+}
+
 function parseJsonBlock(text) {
   const fenced = text.match(/```json\s*([\s\S]*?)```/i);
   if (fenced?.[1]) {
@@ -124,7 +132,7 @@ function extractAssistantBody(text) {
   return String(text || "").trim();
 }
 
-function buildBbbTurnPrompt(session, userText) {
+function buildBbbTurnPrompt(session, userText, recalledHistory = "") {
   const filesBlock =
     Array.isArray(session.attachedFilePaths) && session.attachedFilePaths.length
       ? [
@@ -156,6 +164,7 @@ function buildBbbTurnPrompt(session, userText) {
     "",
     "Recent conversation:",
     summarizeMessages(session.messages),
+    recalledHistory ? "\nRelevant older context from session logs:\n" + recalledHistory : "",
     "",
     "Latest user message:",
     userText,
@@ -179,7 +188,7 @@ function buildBbbTurnPrompt(session, userText) {
   ].join("\n");
 }
 
-function buildEvaluationPrompt(session) {
+function buildEvaluationPrompt(session, recalledHistory = "") {
   return [
     "You are the Dossier Evaluation Squad.",
     "Evaluate this fiction intake through five lenses: ATLAS, PSYCH, NOVA, TEMPO, NICHE.",
@@ -190,6 +199,7 @@ function buildEvaluationPrompt(session) {
     "",
     "Conversation context:",
     summarizeMessages(session.messages, 20),
+    recalledHistory ? "\nRelevant older context from session logs:\n" + recalledHistory : "",
     "",
     "JSON schema:",
     "{",
@@ -253,6 +263,183 @@ function runCodexExec(cwd, model, prompt, timeoutMs = 120000) {
       return resolve({ stdout, stderr });
     });
   });
+}
+
+function ensureSessionPaths(session) {
+  const intakeDir = path.join(session.cwd, "intake");
+  const dossiersDir = path.join(session.cwd, "dossiers");
+  const logsDir = path.join(session.cwd, "logs");
+  const transcriptPath = path.join(logsDir, "INTAKE_CONVERSATION.md");
+  const jsonlPath = path.join(logsDir, "INTAKE_CONVERSATION.jsonl");
+  const checkpointPath = path.join(logsDir, "SESSION_STATE.json");
+  return { intakeDir, dossiersDir, logsDir, transcriptPath, jsonlPath, checkpointPath };
+}
+
+async function ensureSessionLogFiles(session) {
+  const paths = ensureSessionPaths(session);
+  await fs.mkdir(paths.logsDir, { recursive: true });
+  session.logPaths = paths;
+  try {
+    await fs.access(paths.transcriptPath);
+  } catch {
+    const header = ["# Intake Conversation", "", `- Session: ${session.id}`, ""].join("\n");
+    await fs.writeFile(paths.transcriptPath, header, "utf8");
+  }
+  try {
+    await fs.access(paths.jsonlPath);
+  } catch {
+    await fs.writeFile(paths.jsonlPath, "", "utf8");
+  }
+  return paths;
+}
+
+function truncateSessionMemory(session) {
+  if (!Array.isArray(session.messages)) {
+    session.messages = [];
+    return;
+  }
+  if (session.messages.length > MAX_SESSION_MESSAGES) {
+    session.messages = session.messages.slice(-MAX_SESSION_MESSAGES);
+  }
+}
+
+async function appendSessionLogEntry(session, entry) {
+  const paths = await ensureSessionLogFiles(session);
+  const safeRole = String(entry.role || "assistant").toUpperCase();
+  const safeAt = String(entry.at || nowIso());
+  const safeText = String(entry.text || "").replace(/\r/g, "");
+  const md = `## ${safeRole} (${safeAt})\n${safeText}\n\n`;
+  await fs.appendFile(paths.transcriptPath, md, "utf8");
+  await fs.appendFile(paths.jsonlPath, `${JSON.stringify({ role: safeRole.toLowerCase(), at: safeAt, text: safeText })}\n`, "utf8");
+}
+
+async function readSessionJsonlEntries(session) {
+  const paths = await ensureSessionLogFiles(session);
+  try {
+    const raw = await fs.readFile(paths.jsonlPath, "utf8");
+    const scanned = raw.length > MAX_LOG_SCAN_CHARS ? raw.slice(raw.length - MAX_LOG_SCAN_CHARS) : raw;
+    return scanned
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        try {
+          return JSON.parse(line);
+        } catch {
+          return null;
+        }
+      })
+      .filter((x) => x && x.role && x.text);
+  } catch {
+    return [];
+  }
+}
+
+function scoreHistoryEntry(entry, queryTerms) {
+  const haystack = String(entry.text || "").toLowerCase();
+  let score = 0;
+  for (const term of queryTerms) {
+    if (!term) continue;
+    if (haystack.includes(term)) score += 2;
+    if (haystack.startsWith(term)) score += 1;
+  }
+  return score;
+}
+
+async function retrieveRelevantHistory(session, query, maxItems = MAX_RETRIEVED_SNIPPETS) {
+  const entries = await readSessionJsonlEntries(session);
+  if (!entries.length) return "";
+  const recentSignature = new Set(session.messages.map((m) => `${m.role}|${m.at}|${m.text}`));
+  const queryTerms = String(query || "")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/g)
+    .filter((x) => x.length >= 4)
+    .slice(0, 18);
+  const scored = entries
+    .filter((e) => !recentSignature.has(`${e.role}|${e.at}|${e.text}`))
+    .map((e, idx) => ({ e, idx, score: scoreHistoryEntry(e, queryTerms) }))
+    .sort((a, b) => b.score - a.score || b.idx - a.idx)
+    .slice(0, maxItems)
+    .sort((a, b) => a.idx - b.idx)
+    .map(({ e }) => `${String(e.role || "").toUpperCase()}: ${trimForPrompt(e.text, 700)}`);
+  return scored.join("\n\n");
+}
+
+async function readSessionTranscript(session) {
+  const paths = await ensureSessionLogFiles(session);
+  try {
+    return await fs.readFile(paths.transcriptPath, "utf8");
+  } catch {
+    return ["# Intake Conversation", "", ...session.messages.map((m) => `## ${m.role.toUpperCase()} (${m.at})\n${m.text}\n`)].join(
+      "\n"
+    );
+  }
+}
+
+function buildSessionArtifacts(session) {
+  const intakeDoc = [
+    "# Story Intake",
+    "",
+    `- Saved: ${nowIso()}`,
+    `- Title: ${session.intake.title}`,
+    `- Genre: ${session.intake.genre}`,
+    `- Tone: ${session.intake.tone}`,
+    `- Readiness: ${session.readiness}`,
+    "",
+    "## Concept",
+    session.intake.concept || "(none)",
+    "",
+    "## Notes",
+    session.intake.notes || "(none)",
+    ""
+  ].join("\n");
+
+  const dossierDoc = [
+    "# DOSSIER DRAFT",
+    "",
+    `## Title\n${session.intake.title || "(none)"}`,
+    "",
+    `## Genre\n${session.intake.genre || "(none)"}`,
+    "",
+    `## Tone\n${session.intake.tone || "(none)"}`,
+    "",
+    `## Core Concept\n${session.intake.concept || "(none)"}`,
+    "",
+    `## Working Notes\n${session.intake.notes || "(none)"}`,
+    "",
+    session.lastEvaluation
+      ? `## Evaluation Snapshot\n\`\`\`json\n${JSON.stringify(session.lastEvaluation, null, 2)}\n\`\`\`\n`
+      : "## Evaluation Snapshot\n(not run)\n"
+  ].join("\n");
+
+  return { intakeDoc, dossierDoc };
+}
+
+async function persistSessionArtifacts(session) {
+  const paths = ensureSessionPaths(session);
+  await fs.mkdir(paths.intakeDir, { recursive: true });
+  await fs.mkdir(paths.dossiersDir, { recursive: true });
+  await fs.mkdir(paths.logsDir, { recursive: true });
+  session.logPaths = paths;
+
+  const { intakeDoc, dossierDoc } = buildSessionArtifacts(session);
+  const intakePath = path.join(paths.intakeDir, "STORY_INTAKE.md");
+  const dossierPath = path.join(paths.dossiersDir, "DOSSIER_DRAFT.md");
+  const checkpoint = {
+    id: session.id,
+    savedAt: nowIso(),
+    cwd: session.cwd,
+    model: session.model,
+    readiness: session.readiness,
+    readyForEvaluation: session.readyForEvaluation,
+    intake: session.intake,
+    lastEvaluation: session.lastEvaluation
+  };
+
+  await fs.writeFile(intakePath, intakeDoc, "utf8");
+  await fs.writeFile(dossierPath, dossierDoc, "utf8");
+  await fs.writeFile(paths.checkpointPath, JSON.stringify(checkpoint, null, 2), "utf8");
+  return { intakePath, dossierPath, checkpointPath: paths.checkpointPath };
 }
 
 function chooseDirectoryMacOS(startPath = "", prompt = "Choose a folder") {
@@ -730,7 +917,7 @@ app.post("/api/upload", upload.array("files", 12), async (req, res) => {
   }
 });
 
-app.post("/api/session/start", (req, res) => {
+app.post("/api/session/start", async (req, res) => {
   const { cwd = DEFAULT_WORKSPACE, model = "", skillsDir = DEFAULT_SKILLS_DIR, includeSystem = false } =
     req.body || {};
   const id = `sess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -751,6 +938,12 @@ app.post("/api/session/start", (req, res) => {
     busy: false
   };
   sessions.set(id, session);
+  try {
+    await ensureSessionLogFiles(session);
+    await persistSessionArtifacts(session);
+  } catch (error) {
+    console.warn(`[autosave] session start failed for ${id}: ${error.message}`);
+  }
   return res.json({ id, session });
 });
 
@@ -794,9 +987,18 @@ app.post("/api/session/:id/message", async (req, res) => {
   }
 
   session.busy = true;
-  session.messages.push({ role: "user", text: userText, at: nowIso() });
+  const userEntry = { role: "user", text: userText, at: nowIso() };
+  session.messages.push(userEntry);
+  truncateSessionMemory(session);
+  await appendSessionLogEntry(session, userEntry).catch((error) => {
+    console.warn(`[autosave] append user log failed for ${session.id}: ${error.message}`);
+  });
+  await persistSessionArtifacts(session).catch((error) => {
+    console.warn(`[autosave] pre-turn failed for ${session.id}: ${error.message}`);
+  });
   try {
-    const prompt = buildBbbTurnPrompt(session, userText);
+    const recalledHistory = await retrieveRelevantHistory(session, `${userText} ${session.intake.concept || ""}`);
+    const prompt = buildBbbTurnPrompt(session, userText, recalledHistory);
     const run = await runCodexExec(session.cwd, session.model, prompt, 420000);
     const assistantText = extractAssistantBody(run.stdout);
     const parsed = parseJsonBlock(run.stdout) || {};
@@ -807,7 +1009,15 @@ app.post("/api/session/:id/message", async (req, res) => {
     session.intake = nextIntake;
     session.readiness = Number.isFinite(readiness) ? Math.max(0, Math.min(100, readiness)) : 0;
     session.readyForEvaluation = readyForEvaluation || session.readiness >= 80;
-    session.messages.push({ role: "assistant", text: assistantText, at: nowIso() });
+    const assistantEntry = { role: "assistant", text: assistantText, at: nowIso() };
+    session.messages.push(assistantEntry);
+    truncateSessionMemory(session);
+    await appendSessionLogEntry(session, assistantEntry).catch((error) => {
+      console.warn(`[autosave] append assistant log failed for ${session.id}: ${error.message}`);
+    });
+    await persistSessionArtifacts(session).catch((error) => {
+      console.warn(`[autosave] post-turn failed for ${session.id}: ${error.message}`);
+    });
     return res.json({
       ok: true,
       assistant: assistantText,
@@ -830,17 +1040,29 @@ app.post("/api/session/:id/evaluate", async (req, res) => {
 
   session.busy = true;
   try {
-    const prompt = buildEvaluationPrompt(session);
+    const recalledHistory = await retrieveRelevantHistory(
+      session,
+      `${session.intake.title || ""} ${session.intake.genre || ""} ${session.intake.concept || ""}`
+    );
+    const prompt = buildEvaluationPrompt(session, recalledHistory);
     const run = await runCodexExec(session.cwd, session.model, prompt);
     const parsed = parseJsonBlock(run.stdout);
     if (!parsed) {
       return res.status(500).json({ error: "Failed to parse evaluation output." });
     }
     session.lastEvaluation = parsed;
-    session.messages.push({
+    const assistantEntry = {
       role: "assistant",
       text: `Evaluation complete. Overall ${parsed.overall}/100. Verdict: ${parsed.verdict}`,
       at: nowIso()
+    };
+    session.messages.push(assistantEntry);
+    truncateSessionMemory(session);
+    await appendSessionLogEntry(session, assistantEntry).catch((error) => {
+      console.warn(`[autosave] append evaluation log failed for ${session.id}: ${error.message}`);
+    });
+    await persistSessionArtifacts(session).catch((error) => {
+      console.warn(`[autosave] evaluation failed for ${session.id}: ${error.message}`);
     });
     return res.json({ ok: true, evaluation: parsed });
   } catch (error) {
@@ -861,47 +1083,8 @@ app.post("/api/session/:id/export", async (req, res) => {
     const intakeBase = session.intake.title
       ? session.intake.title.replace(/[^\w.\- ]/g, "_").trim().replace(/\s+/g, "_")
       : "STORY_INTAKE";
-
-    const intakeDoc = [
-      "# Story Intake",
-      "",
-      `- Saved: ${nowIso()}`,
-      `- Title: ${session.intake.title}`,
-      `- Genre: ${session.intake.genre}`,
-      `- Tone: ${session.intake.tone}`,
-      `- Readiness: ${session.readiness}`,
-      "",
-      "## Concept",
-      session.intake.concept || "(none)",
-      "",
-      "## Notes",
-      session.intake.notes || "(none)",
-      ""
-    ].join("\n");
-
-    const dossierDoc = [
-      "# DOSSIER DRAFT",
-      "",
-      `## Title\n${session.intake.title || "(none)"}`,
-      "",
-      `## Genre\n${session.intake.genre || "(none)"}`,
-      "",
-      `## Tone\n${session.intake.tone || "(none)"}`,
-      "",
-      `## Core Concept\n${session.intake.concept || "(none)"}`,
-      "",
-      `## Working Notes\n${session.intake.notes || "(none)"}`,
-      "",
-      session.lastEvaluation
-        ? `## Evaluation Snapshot\n\`\`\`json\n${JSON.stringify(session.lastEvaluation, null, 2)}\n\`\`\`\n`
-        : "## Evaluation Snapshot\n(not run)\n"
-    ].join("\n");
-
-    const transcript = [
-      "# Intake Conversation",
-      "",
-      ...session.messages.map((m) => `## ${m.role.toUpperCase()} (${m.at})\n${m.text}\n`)
-    ].join("\n");
+    const { intakeDoc, dossierDoc } = buildSessionArtifacts(session);
+    const transcript = await readSessionTranscript(session);
     if (format === "docx") {
       const docxPath = path.join(outputDir, `${intakeBase}_SESSION_EXPORT.docx`);
       const toParagraphs = (text) =>

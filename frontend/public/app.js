@@ -16,14 +16,19 @@ const el = {
   refreshSkillsBtn: document.getElementById("refreshSkillsBtn"),
   skillsList: document.getElementById("skillsList"),
   startSessionBtn: document.getElementById("startSessionBtn"),
+  launchAbbBtn: document.getElementById("launchAbbBtn"),
   micBtn: document.getElementById("micBtn"),
   evaluateBtn: document.getElementById("evaluateBtn"),
+  masterSaveBtn: document.getElementById("masterSaveBtn"),
   sessionMeta: document.getElementById("sessionMeta"),
   conversationLog: document.getElementById("conversationLog"),
   conversationInput: document.getElementById("conversationInput"),
   sendConversationBtn: document.getElementById("sendConversationBtn"),
   forceSendBtn: document.getElementById("forceSendBtn"),
   autoSendVoice: document.getElementById("autoSendVoice"),
+  evalProgress: document.getElementById("evalProgress"),
+  evalProgressCircle: document.getElementById("evalProgressCircle"),
+  evalProgressText: document.getElementById("evalProgressText"),
   turnProgress: document.getElementById("turnProgress"),
   turnProgressCircle: document.getElementById("turnProgressCircle"),
   turnProgressText: document.getElementById("turnProgressText"),
@@ -81,6 +86,7 @@ const state = {
 };
 const MAX_TURN_CHARS = 2200;
 const TURN_REQUEST_TIMEOUT_MS = 240000;
+const EVAL_REQUEST_TIMEOUT_MS = 300000;
 
 function setStatus(text) {
   el.status.textContent = text;
@@ -387,17 +393,47 @@ async function sendConversationTurn(textOverride = "") {
 
 async function runEvaluation() {
   if (!state.sessionId) throw new Error("Start a session first.");
-  const res = await fetch(`/api/session/${encodeURIComponent(state.sessionId)}/evaluate`, {
-    method: "POST"
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || "Evaluation failed");
-  const e = data.evaluation;
-  addConversationMessage(
-    "assistant",
-    `Evaluation: overall ${e.overall}/100 | pass=${e.pass}\nVerdict: ${e.verdict}\nMust fix: ${(e.must_fix || []).join("; ") || "(none)"}`
-  );
-  setStatus(`Evaluation complete. Overall ${e.overall}/100.`);
+  if (runEvaluation._busy) {
+    setStatus("Evaluation already running...");
+    return;
+  }
+  runEvaluation._busy = true;
+  const originalLabel = el.evaluateBtn.textContent;
+  el.evaluateBtn.disabled = true;
+  el.evaluateBtn.textContent = "Evaluating...";
+  startEvalProgress();
+  try {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), EVAL_REQUEST_TIMEOUT_MS);
+    let res;
+    try {
+      res = await fetch(`/api/session/${encodeURIComponent(state.sessionId)}/evaluate`, {
+        method: "POST",
+        signal: controller.signal
+      });
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Evaluation failed");
+    const e = data.evaluation;
+    addConversationMessage(
+      "assistant",
+      `Evaluation: overall ${e.overall}/100 | pass=${e.pass}\nVerdict: ${e.verdict}\nMust fix: ${(e.must_fix || []).join("; ") || "(none)"}`
+    );
+    setStatus(`Evaluation complete. Overall ${e.overall}/100.`);
+    stopEvalProgress(true);
+  } catch (error) {
+    stopEvalProgress(false);
+    if (error?.name === "AbortError") {
+      throw new Error("Evaluation timed out");
+    }
+    throw error;
+  } finally {
+    runEvaluation._busy = false;
+    el.evaluateBtn.disabled = false;
+    el.evaluateBtn.textContent = originalLabel;
+  }
 }
 
 async function exportSessionFiles(format = "md", sessionIdOverride = "") {
@@ -459,6 +495,47 @@ let autoSendTimer = null;
 let pendingAutoSend = false;
 let activeTurnController = null;
 let turnProgressTimer = null;
+let evalProgressTimer = null;
+
+function setEvalProgress(percent) {
+  const clamped = Math.max(0, Math.min(100, Number(percent) || 0));
+  const shown = Math.round(clamped);
+  const visiblePercent = Math.max(2, shown);
+  el.evalProgressCircle.style.strokeDasharray = `${visiblePercent} 100`;
+  if (shown < 45) {
+    el.evalProgressCircle.style.stroke = "#2aa7ff";
+  } else if (shown < 80) {
+    el.evalProgressCircle.style.stroke = "#69be28";
+  } else {
+    el.evalProgressCircle.style.stroke = "#e63946";
+  }
+  el.evalProgressText.textContent = `Evaluating ${shown}%`;
+}
+
+function startEvalProgress() {
+  const startedAt = Date.now();
+  el.evalProgress.classList.remove("hidden");
+  setEvalProgress(2);
+  window.clearInterval(evalProgressTimer);
+  evalProgressTimer = window.setInterval(() => {
+    const elapsed = Date.now() - startedAt;
+    const ratio = Math.min(0.95, elapsed / EVAL_REQUEST_TIMEOUT_MS);
+    setEvalProgress(ratio * 100);
+  }, 250);
+}
+
+function stopEvalProgress(success = true) {
+  window.clearInterval(evalProgressTimer);
+  evalProgressTimer = null;
+  if (success) {
+    setEvalProgress(100);
+    window.setTimeout(() => {
+      el.evalProgress.classList.add("hidden");
+    }, 220);
+  } else {
+    el.evalProgress.classList.add("hidden");
+  }
+}
 
 function setTurnProgress(percent) {
   const clamped = Math.max(0, Math.min(100, Number(percent) || 0));
@@ -578,6 +655,35 @@ function buildPromptFromIntake() {
   el.userPrompt.value = lines.join("\n");
 }
 
+function buildAutoBookBuilderPrompt() {
+  const title = el.storyTitle.value.trim() || "(untitled)";
+  const genre = el.storyGenre.value.trim() || "(unspecified)";
+  const tone = el.storyTone.value.trim() || "(unspecified)";
+  const concept = el.storyConcept.value.trim() || "(none)";
+  const notes = el.storyNotes.value.trim() || "(none)";
+  return [
+    "Initialize project from DOSSIER.md and write files in the selected workspace.",
+    "Use the auto-book-builder skill to begin drafting Act I now.",
+    "If dossier fields are incomplete, minimally normalize from the intake below and proceed.",
+    "",
+    `Title: ${title}`,
+    `Genre: ${genre}`,
+    `Tone: ${tone}`,
+    "",
+    "Concept:",
+    concept,
+    "",
+    "Notes:",
+    notes,
+    "",
+    "Required deliverables:",
+    "1. Create/initialize project folder in workspace.",
+    "2. Produce Act I outputs as markdown chapter files.",
+    "3. Update continuity artifacts and build/session memory files.",
+    "4. Return explicit file paths for everything created."
+  ].join("\n");
+}
+
 async function loadSkills() {
   const params = new URLSearchParams({
     skillsDir: el.skillsDir.value.trim(),
@@ -658,7 +764,7 @@ async function openJob(id) {
 }
 
 async function runTask() {
-  const payload = {
+  return runTaskWithPayload({
     userPrompt: el.userPrompt.value,
     cwd: el.cwd.value.trim(),
     model: el.model.value.trim(),
@@ -667,6 +773,15 @@ async function runTask() {
     skillsDir: el.skillsDir.value.trim(),
     includeSystem: el.includeSystem.checked,
     dryRun: el.dryRun.checked
+  });
+}
+
+async function runTaskWithPayload(inputPayload) {
+  const payload = {
+    ...inputPayload,
+    attachedFilePaths: Array.isArray(inputPayload?.attachedFilePaths)
+      ? inputPayload.attachedFilePaths
+      : state.uploadedPaths
   };
   const res = await fetch("/api/run", {
     method: "POST",
@@ -678,6 +793,51 @@ async function runTask() {
   setStatus(`Started job ${data.id} (${data.status}).`);
   await loadJobs();
   await openJob(data.id);
+}
+
+async function launchAutoBookBuilder() {
+  await saveStoryIntake();
+  const autoPrompt = buildAutoBookBuilderPrompt();
+  el.userPrompt.value = autoPrompt;
+  const payload = {
+    userPrompt: autoPrompt,
+    cwd: el.cwd.value.trim(),
+    model: el.model.value.trim(),
+    skillIds: ["auto-book-builder"],
+    attachedFilePaths: state.uploadedPaths,
+    skillsDir: el.skillsDir.value.trim(),
+    includeSystem: el.includeSystem.checked,
+    dryRun: false
+  };
+  const originalLabel = el.launchAbbBtn.textContent;
+  el.launchAbbBtn.disabled = true;
+  el.launchAbbBtn.textContent = "Launching...";
+  try {
+    await runTaskWithPayload(payload);
+    setStatus("Auto Book Builder launched.");
+  } finally {
+    el.launchAbbBtn.disabled = false;
+    el.launchAbbBtn.textContent = originalLabel;
+  }
+}
+
+async function masterSaveAll() {
+  const originalLabel = el.masterSaveBtn.textContent;
+  el.masterSaveBtn.disabled = true;
+  el.masterSaveBtn.textContent = "Saving...";
+  try {
+    await saveStoryIntake();
+    if (state.sessionId) {
+      await exportSessionFiles("md");
+      await exportSessionFiles("docx");
+      setStatus("Master Save complete: intake + session exports (MD, DOCX).");
+    } else {
+      setStatus("Master Save complete: STORY_INTAKE.md saved (start a session to export conversation artifacts).");
+    }
+  } finally {
+    el.masterSaveBtn.disabled = false;
+    el.masterSaveBtn.textContent = originalLabel;
+  }
 }
 
 async function saveStoryIntake() {
@@ -810,6 +970,22 @@ el.startSessionBtn.addEventListener("click", async () => {
     openSessionStartModal();
   } catch (error) {
     setStatus(`Session error: ${error.message}`);
+  }
+});
+
+el.launchAbbBtn.addEventListener("click", async () => {
+  try {
+    await launchAutoBookBuilder();
+  } catch (error) {
+    setStatus(`Launch error: ${error.message}`);
+  }
+});
+
+el.masterSaveBtn.addEventListener("click", async () => {
+  try {
+    await masterSaveAll();
+  } catch (error) {
+    setStatus(`Master save error: ${error.message}`);
   }
 });
 
