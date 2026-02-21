@@ -261,6 +261,27 @@
           </div>
         </div>
       </div>
+
+      <div id="onboardingModal" class="modal hidden" role="dialog" aria-modal="true">
+        <div class="modal-card">
+          <h2>First-Time Setup</h2>
+          <p class="muted">
+            Let’s connect Codex CLI so this app can run Book Brain Builder and Auto Book Builder jobs.
+          </p>
+          <div id="onboardingStatus" class="path-preview">Checking local setup...</div>
+          <div class="path-preview">
+            <strong>Quick steps:</strong><br />
+            1. Install Codex CLI if missing.<br />
+            2. Authenticate in your terminal (`codex` and complete login if prompted).<br />
+            3. Click “Recheck Connection”.
+          </div>
+          <div class="actions">
+            <button id="onboardingRecheckBtn" type="button">Recheck Connection</button>
+            <button id="onboardingOpenDocsBtn" type="button" class="secondary">Open Setup Docs</button>
+            <button id="onboardingDismissBtn" type="button" class="secondary">Continue Anyway</button>
+          </div>
+        </div>
+      </div>
     </main>
     <script src="/app.js"></script>
   </body>

@@ -6,8 +6,11 @@ This repo includes one-click launcher assets for the Auto Book Builder local ser
 - `scripts/start-autobook.sh`
 - `scripts/stop-autobook.sh`
 - `scripts/status-autobook.sh`
+- `scripts/build-macos-launcher-app.sh`
 - `launchers/macos/AutoBookBuilder.command`
 - `launchers/macos/StopAutoBookBuilder.command`
+- `launchers/macos/AutoBookBuilderLauncher.applescript`
+- `launchers/macos/AutoBookBuilderLauncher.app`
 
 ## What Start Does
 - Ensures `frontend/node_modules` exists (runs `npm install` on first run).
@@ -39,9 +42,16 @@ Status:
 
 ## Make It a Dock/App Shortcut
 1. Open Finder to `launchers/macos`.
-2. Double-click `AutoBookBuilder.command` once to confirm it launches.
-3. Drag that `.command` file to your Dock, or create an Automator wrapper app that runs it.
+2. Double-click `AutoBookBuilderLauncher.app` to launch.
+3. Drag `AutoBookBuilderLauncher.app` to `/Applications` to make it appear in Launchpad.
 4. Optional: assign a custom icon in Finder (`Get Info` -> paste icon).
+
+## Rebuild the `.app` Launcher
+If you update launcher behavior and want to rebuild the app bundle:
+
+```bash
+./scripts/build-macos-launcher-app.sh
+```
 
 ## Notes
 - Launcher scripts are designed for local personal use.

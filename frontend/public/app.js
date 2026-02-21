@@ -9,6 +9,11 @@ const el = {
   modelSetupText: document.getElementById("modelSetupText"),
   useDetectedModelBtn: document.getElementById("useDetectedModelBtn"),
   keepCurrentModelBtn: document.getElementById("keepCurrentModelBtn"),
+  onboardingModal: document.getElementById("onboardingModal"),
+  onboardingStatus: document.getElementById("onboardingStatus"),
+  onboardingRecheckBtn: document.getElementById("onboardingRecheckBtn"),
+  onboardingOpenDocsBtn: document.getElementById("onboardingOpenDocsBtn"),
+  onboardingDismissBtn: document.getElementById("onboardingDismissBtn"),
   includeSystem: document.getElementById("includeSystem"),
   browseSkillsDirBtn: document.getElementById("browseSkillsDirBtn"),
   browseCwdBtn: document.getElementById("browseCwdBtn"),
@@ -87,9 +92,18 @@ const state = {
 const MAX_TURN_CHARS = 2200;
 const TURN_REQUEST_TIMEOUT_MS = 240000;
 const EVAL_REQUEST_TIMEOUT_MS = 300000;
+const ONBOARDING_ACK_KEY = "autobookOnboardingAck";
 
 function setStatus(text) {
   el.status.textContent = text;
+}
+
+function closeOnboardingModal() {
+  el.onboardingModal.classList.add("hidden");
+}
+
+function openOnboardingModal() {
+  el.onboardingModal.classList.remove("hidden");
 }
 
 function syncModelInputs(source = "model") {
@@ -740,6 +754,40 @@ async function loadJobs() {
   renderJobs();
 }
 
+function formatOnboardingStatus(status) {
+  if (!status) return "Unable to determine setup status.";
+  const lines = [];
+  lines.push(`Codex CLI installed: ${status.codexInstalled ? "yes" : "no"}`);
+  if (status.codexVersion) lines.push(`Codex version: ${status.codexVersion}`);
+  lines.push(`Codex auth detected: ${status.codexAuthDetected ? "yes" : "no"}`);
+  lines.push(`Codex CLI operational: ${status.codexOperational ? "yes" : "no"}`);
+  lines.push(`Skills directory found: ${status.skillsDirExists ? "yes" : "no"}`);
+  lines.push(`Detected model config: ${status.detectedModel || "(none)"}`);
+  if (status.lastError) lines.push(`Last check error: ${status.lastError}`);
+  lines.push(status.ready ? "Status: Ready." : "Status: Setup needed.");
+  return lines.join("\n");
+}
+
+async function checkOnboarding(forceShow = false, deepCheck = false) {
+  const params = new URLSearchParams({
+    cwd: el.cwd.value.trim() || defaults.cwd,
+    deep: deepCheck ? "1" : "0"
+  });
+  const res = await fetch(`/api/onboarding/status?${params.toString()}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Onboarding check failed");
+  el.onboardingStatus.textContent = formatOnboardingStatus(data);
+  if (data.ready) {
+    localStorage.setItem(ONBOARDING_ACK_KEY, "1");
+    closeOnboardingModal();
+    return;
+  }
+  const previouslyAcknowledged = localStorage.getItem(ONBOARDING_ACK_KEY) === "1";
+  if (forceShow || !previouslyAcknowledged) {
+    openOnboardingModal();
+  }
+}
+
 async function openJob(id) {
   const res = await fetch(`/api/jobs/${encodeURIComponent(id)}`);
   const data = await res.json();
@@ -918,6 +966,9 @@ async function refreshAll() {
     await loadSkills();
     await loadModels(true);
     await loadJobs();
+    checkOnboarding(false, false).catch(() => {
+      // Keep startup responsive even if onboarding verification fails.
+    });
   } catch (error) {
     setStatus(`Error: ${error.message}`);
   }
@@ -930,6 +981,25 @@ el.refreshSkillsBtn.addEventListener("click", async () => {
   } catch (error) {
     setStatus(`Error: ${error.message}`);
   }
+});
+
+el.onboardingRecheckBtn.addEventListener("click", async () => {
+  try {
+    await checkOnboarding(true, true);
+    setStatus("Onboarding check completed.");
+  } catch (error) {
+    setStatus(`Onboarding error: ${error.message}`);
+  }
+});
+
+el.onboardingDismissBtn.addEventListener("click", () => {
+  localStorage.setItem(ONBOARDING_ACK_KEY, "1");
+  closeOnboardingModal();
+  setStatus("Onboarding dismissed.");
+});
+
+el.onboardingOpenDocsBtn.addEventListener("click", () => {
+  window.open("https://github.com/openai/codex", "_blank", "noopener,noreferrer");
 });
 
 el.runBtn.addEventListener("click", async () => {

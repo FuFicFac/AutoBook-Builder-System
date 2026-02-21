@@ -38,8 +38,10 @@ Repository-ready documentation package for deploying and operating a local AI-as
 ## One-Click Local Launcher (macOS)
 - Launcher docs: `docs/LOCAL_LAUNCHER_SETUP.md`
 - Start: `./launchers/macos/AutoBookBuilder.command`
+- App launcher: `launchers/macos/AutoBookBuilderLauncher.app` (Launchpad-friendly)
 - Stop: `./launchers/macos/StopAutoBookBuilder.command`
 - Status: `./scripts/status-autobook.sh`
+- Rebuild app bundle: `./scripts/build-macos-launcher-app.sh`
 
 First-time setup:
 - `chmod +x scripts/*.sh launchers/macos/*.command`

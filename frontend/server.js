@@ -265,6 +265,40 @@ function runCodexExec(cwd, model, prompt, timeoutMs = 120000) {
   });
 }
 
+function runCommandCapture(command, args = [], cwd = process.cwd(), timeoutMs = 15000) {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, { cwd: String(cwd), env: process.env });
+    let stdout = "";
+    let stderr = "";
+    let done = false;
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      child.kill("SIGTERM");
+      resolve({ ok: false, code: null, stdout: trimLog(stdout), stderr: trimLog(stderr), timedOut: true });
+    }, timeoutMs);
+
+    child.stdout.on("data", (buf) => {
+      stdout = trimLog(stdout + buf.toString());
+    });
+    child.stderr.on("data", (buf) => {
+      stderr = trimLog(stderr + buf.toString());
+    });
+    child.on("error", (error) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve({ ok: false, code: null, stdout: trimLog(stdout), stderr: trimLog(`${stderr}\n${error.message}`) });
+    });
+    child.on("close", (code) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve({ ok: code === 0, code, stdout: trimLog(stdout), stderr: trimLog(stderr) });
+    });
+  });
+}
+
 function ensureSessionPaths(session) {
   const intakeDir = path.join(session.cwd, "intake");
   const dossiersDir = path.join(session.cwd, "dossiers");
@@ -659,6 +693,73 @@ app.get("/api/models", async (req, res) => {
   ].filter(Boolean);
   const unique = [...new Set(options)];
   res.json({ detectedModel, options: unique });
+});
+
+app.get("/api/onboarding/status", async (req, res) => {
+  const cwd = String(req.query.cwd || DEFAULT_WORKSPACE);
+  const skillsDir = String(req.query.skillsDir || DEFAULT_SKILLS_DIR);
+  const deep = req.query.deep === "1";
+  const detectedModel = await detectConfiguredModel();
+  let codexInstalled = false;
+  let codexVersion = "";
+  let codexOperational = false;
+  let codexAuthDetected = false;
+  let skillsDirExists = false;
+  let lastError = "";
+
+  try {
+    const stat = await fs.stat(skillsDir);
+    skillsDirExists = stat.isDirectory();
+  } catch {
+    skillsDirExists = false;
+  }
+
+  const versionCheck = await runCommandCapture("codex", ["--version"], cwd, 10000);
+  codexInstalled = versionCheck.ok || versionCheck.code !== null;
+  codexVersion = String(versionCheck.stdout || versionCheck.stderr || "")
+    .split("\n")[0]
+    .trim();
+  if (!codexInstalled) {
+    lastError = "Codex CLI not found on PATH.";
+  }
+
+  if (codexInstalled) {
+    try {
+      const authPath = path.join(process.env.HOME || "", ".codex", "auth.json");
+      if (authPath) {
+        await fs.access(authPath);
+        codexAuthDetected = true;
+      }
+    } catch {
+      codexAuthDetected = false;
+    }
+
+    codexOperational = codexAuthDetected;
+    if (deep) {
+      try {
+        const run = await runCodexExec(cwd, detectedModel, "Reply with exactly: CLI_OK", 12000);
+        codexOperational = /\bCLI_OK\b/i.test(String(run.stdout || ""));
+        if (!codexOperational && !lastError) {
+          lastError = "Codex CLI responded, but onboarding verification response was unexpected.";
+        }
+      } catch (error) {
+        codexOperational = false;
+        lastError = error.message;
+      }
+    }
+  }
+
+  const ready = codexInstalled && codexOperational && skillsDirExists;
+  res.json({
+    ready,
+    codexInstalled,
+    codexVersion,
+    codexOperational,
+    codexAuthDetected,
+    skillsDirExists,
+    detectedModel,
+    lastError
+  });
 });
 
 app.get("/api/fs/list", async (req, res) => {
