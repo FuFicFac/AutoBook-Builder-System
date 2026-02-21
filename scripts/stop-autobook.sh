@@ -4,15 +4,17 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 FRONTEND_DIR="${ROOT_DIR}/frontend"
+FRONTEND_DIR_REAL="$(cd "${FRONTEND_DIR}" 2>/dev/null && pwd -P || true)"
 RUNTIME_DIR="${ROOT_DIR}/.runtime"
 PID_FILE="${RUNTIME_DIR}/autobook.pid"
 
 is_expected_app_process() {
   local pid="$1"
-  local cmd cwd
+  local cmd cwd cwd_real
   cmd="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
   cwd="$(lsof -a -p "${pid}" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1 || true)"
-  if [[ "${cmd}" == *"node server.js"* ]] && [[ "${cwd}" == "${FRONTEND_DIR}" ]]; then
+  cwd_real="$(cd "${cwd}" 2>/dev/null && pwd -P || true)"
+  if [[ "${cmd}" == *"node server.js"* ]] && [[ -n "${FRONTEND_DIR_REAL}" ]] && [[ "${cwd_real}" == "${FRONTEND_DIR_REAL}" ]]; then
     return 0
   fi
   return 1
