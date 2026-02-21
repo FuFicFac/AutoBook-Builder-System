@@ -10,7 +10,16 @@ import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 
 const app = express();
 const PORT = Number(process.env.PORT || 8787);
-const upload = multer({ storage: multer.memoryStorage() });
+const HOST = process.env.HOST || "127.0.0.1";
+const MAX_UPLOAD_FILE_BYTES = Number(process.env.MAX_UPLOAD_FILE_BYTES || 15 * 1024 * 1024);
+const MAX_UPLOAD_FILES = Number(process.env.MAX_UPLOAD_FILES || 12);
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: MAX_UPLOAD_FILE_BYTES,
+    files: MAX_UPLOAD_FILES
+  }
+});
 
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(process.cwd(), "public")));
@@ -24,6 +33,8 @@ const MAX_LOG_CHARS = 250000;
 const MAX_SESSION_MESSAGES = 16;
 const MAX_RETRIEVED_SNIPPETS = 8;
 const MAX_LOG_SCAN_CHARS = 350000;
+const MAX_JOB_COUNT = Number(process.env.MAX_JOB_COUNT || 150);
+const MAX_JOB_AGE_MS = Number(process.env.MAX_JOB_AGE_MS || 7 * 24 * 60 * 60 * 1000);
 const jobs = new Map();
 const sessions = new Map();
 const HIDDEN_SKILLS = new Set([
@@ -667,6 +678,29 @@ function getJobOr404(res, id) {
   return job;
 }
 
+function pruneJobs() {
+  const now = Date.now();
+  const entries = [...jobs.entries()];
+  for (const [id, job] of entries) {
+    if (!job?.createdAt) continue;
+    const createdMs = Date.parse(job.createdAt);
+    if (!Number.isFinite(createdMs)) continue;
+    if (now - createdMs > MAX_JOB_AGE_MS) {
+      jobs.delete(id);
+    }
+  }
+  if (jobs.size <= MAX_JOB_COUNT) return;
+  const sorted = [...jobs.entries()].sort((a, b) => {
+    const aMs = Date.parse(a[1]?.createdAt || "") || 0;
+    const bMs = Date.parse(b[1]?.createdAt || "") || 0;
+    return aMs - bMs;
+  });
+  const overflow = jobs.size - MAX_JOB_COUNT;
+  for (let i = 0; i < overflow; i += 1) {
+    jobs.delete(sorted[i][0]);
+  }
+}
+
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok", time: nowIso() });
 });
@@ -858,6 +892,7 @@ app.post("/api/session/prepare-workspace", async (req, res) => {
 });
 
 app.get("/api/jobs", (req, res) => {
+  pruneJobs();
   const list = [...jobs.values()]
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .map((j) => ({
@@ -922,6 +957,7 @@ app.post("/api/run", async (req, res) => {
     exitCode: null
   };
   jobs.set(id, job);
+  pruneJobs();
 
   if (dryRun) {
     job.stdout = "Dry run completed. No Codex execution was performed.";
@@ -1027,6 +1063,21 @@ app.post("/api/upload", upload.array("files", 12), async (req, res) => {
   } catch (error) {
     return res.status(400).json({ error: "Upload failed.", details: error.message });
   }
+});
+
+app.use((error, req, res, next) => {
+  if (error instanceof multer.MulterError) {
+    if (error.code === "LIMIT_FILE_SIZE") {
+      return res.status(413).json({
+        error: `Upload failed: file exceeds ${Math.round(MAX_UPLOAD_FILE_BYTES / (1024 * 1024))} MB limit.`
+      });
+    }
+    if (error.code === "LIMIT_FILE_COUNT") {
+      return res.status(413).json({ error: `Upload failed: maximum ${MAX_UPLOAD_FILES} files per request.` });
+    }
+    return res.status(400).json({ error: `Upload failed: ${error.message}` });
+  }
+  return next(error);
 });
 
 app.post("/api/session/start", async (req, res) => {
@@ -1253,6 +1304,6 @@ app.post("/api/session/:id/export", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Auto Book Builder running at http://127.0.0.1:${PORT}`);
+app.listen(PORT, HOST, () => {
+  console.log(`Auto Book Builder running at http://${HOST}:${PORT}`);
 });

@@ -82,6 +82,7 @@ const state = {
   skills: [],
   jobs: [],
   selectedJobId: null,
+  selectedJobStatus: null,
   uploadedPaths: [],
   extractedContexts: [],
   sessionId: null,
@@ -802,6 +803,7 @@ async function openJob(id) {
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || "Failed to load job");
   state.selectedJobId = id;
+  state.selectedJobStatus = data.status || null;
   el.jobOutput.textContent = [
     `# ${data.id}`,
     `status=${data.status}`,
@@ -1245,11 +1247,17 @@ el.micImageQuick.addEventListener("change", () => {
 setInterval(async () => {
   try {
     await loadJobs();
-    if (state.selectedJobId) await openJob(state.selectedJobId);
+    if (state.selectedJobId) {
+      const selectedSummary = state.jobs.find((j) => j.id === state.selectedJobId);
+      const latestStatus = selectedSummary?.status || null;
+      if (latestStatus && latestStatus !== state.selectedJobStatus) {
+        await openJob(state.selectedJobId);
+      }
+    }
   } catch {
     // Keep polling silent.
   }
-}, 3000);
+}, 5000);
 
 el.skillsDir.value = "";
 el.cwd.value = "";
