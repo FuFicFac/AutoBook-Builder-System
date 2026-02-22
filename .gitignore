@@ -15,3 +15,12 @@ node_modules/
 
 # Local launcher runtime
 .runtime/
+
+# Local generated app/session artifacts
+SESSION_WORKSPACE.md
+dossiers/
+drafts/
+exports/
+intake/
+logs/
+uploads/

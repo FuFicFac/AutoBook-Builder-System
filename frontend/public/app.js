@@ -22,7 +22,6 @@ const el = {
   skillsList: document.getElementById("skillsList"),
   startSessionBtn: document.getElementById("startSessionBtn"),
   launchAbbBtn: document.getElementById("launchAbbBtn"),
-  micBtn: document.getElementById("micBtn"),
   evaluateBtn: document.getElementById("evaluateBtn"),
   masterSaveBtn: document.getElementById("masterSaveBtn"),
   sessionMeta: document.getElementById("sessionMeta"),
@@ -30,17 +29,14 @@ const el = {
   conversationInput: document.getElementById("conversationInput"),
   sendConversationBtn: document.getElementById("sendConversationBtn"),
   forceSendBtn: document.getElementById("forceSendBtn"),
-  autoSendVoice: document.getElementById("autoSendVoice"),
   evalProgress: document.getElementById("evalProgress"),
   evalProgressCircle: document.getElementById("evalProgressCircle"),
   evalProgressText: document.getElementById("evalProgressText"),
   turnProgress: document.getElementById("turnProgress"),
   turnProgressCircle: document.getElementById("turnProgressCircle"),
   turnProgressText: document.getElementById("turnProgressText"),
-  micHeroImage: document.getElementById("micHeroImage"),
-  micGlyph: document.getElementById("micGlyph"),
-  micImageFile: document.getElementById("micImageFile"),
-  micImageQuick: document.getElementById("micImageQuick"),
+  diagnosticsOutput: document.getElementById("diagnosticsOutput"),
+  clearDiagnosticsBtn: document.getElementById("clearDiagnosticsBtn"),
   exportDir: document.getElementById("exportDir"),
   exportSessionBtn: document.getElementById("exportSessionBtn"),
   sessionResetModal: document.getElementById("sessionResetModal"),
@@ -73,8 +69,8 @@ const el = {
 };
 
 const defaults = {
-  skillsDir: "",
-  cwd: "",
+  skillsDir: "/Users/lastresort/codex/skills",
+  cwd: "/Volumes/New Home/Crucial Backup /Codex/Gassian-Blender-MCP",
   model: "gpt-5.3-codex"
 };
 
@@ -82,21 +78,34 @@ const state = {
   skills: [],
   jobs: [],
   selectedJobId: null,
-  selectedJobStatus: null,
   uploadedPaths: [],
   extractedContexts: [],
   sessionId: null,
-  readiness: 0,
-  micActive: false,
-  autoSendVoice: false
+  readiness: 0
 };
 const MAX_TURN_CHARS = 2200;
 const TURN_REQUEST_TIMEOUT_MS = 240000;
 const EVAL_REQUEST_TIMEOUT_MS = 300000;
 const ONBOARDING_ACK_KEY = "autobookOnboardingAck";
+const diagnosticsLines = [];
+
+function addDiagnosticLine(message, level = "info") {
+  const stamp = new Date().toLocaleTimeString();
+  diagnosticsLines.push(`[${stamp}] [${level}] ${String(message)}`);
+  while (diagnosticsLines.length > 80) diagnosticsLines.shift();
+  if (el.diagnosticsOutput) {
+    el.diagnosticsOutput.textContent = diagnosticsLines.join("\n") || "No diagnostics yet.";
+    el.diagnosticsOutput.scrollTop = el.diagnosticsOutput.scrollHeight;
+  }
+}
 
 function setStatus(text) {
   el.status.textContent = text;
+  if (text) {
+    const msg = String(text);
+    const level = /error|failed|timeout|blocked/i.test(msg) ? "error" : "info";
+    addDiagnosticLine(msg, level);
+  }
 }
 
 function closeOnboardingModal() {
@@ -195,6 +204,10 @@ function setSessionMeta(text) {
   el.sessionMeta.textContent = text;
 }
 
+function hasSessionId() {
+  return Boolean(state.sessionId);
+}
+
 function openSessionResetModal() {
   el.sessionResetModal.classList.remove("hidden");
 }
@@ -265,27 +278,6 @@ async function startSessionFlow(useChooser = false) {
   }
   await startSession();
   setStatus(`Session workspace prepared at ${prepPayload.cwd}`);
-}
-
-function applyMicHeroImage(dataUrl) {
-  const value = String(dataUrl || "").trim();
-  if (!value) {
-    el.micHeroImage.removeAttribute("src");
-    el.micBtn.classList.remove("mic-photo-loaded");
-    localStorage.removeItem("micHeroImageDataUrl");
-    return;
-  }
-  el.micHeroImage.src = value;
-  el.micBtn.classList.add("mic-photo-loaded");
-  localStorage.setItem("micHeroImageDataUrl", value);
-}
-
-function triggerMicSpeaking() {
-  el.micBtn.classList.add("mic-speaking");
-  window.clearTimeout(triggerMicSpeaking._timer);
-  triggerMicSpeaking._timer = window.setTimeout(() => {
-    el.micBtn.classList.remove("mic-speaking");
-  }, 420);
 }
 
 function applyExtractedIntake(intake) {
@@ -399,10 +391,7 @@ async function sendConversationTurn(textOverride = "") {
     if (turnProgressTimer) {
       stopTurnProgress(true);
     }
-    if (state.autoSendVoice && (pendingAutoSend || el.conversationInput.value.trim())) {
-      pendingAutoSend = false;
-      queueAutoSend();
-    }
+    pendingAutoSend = false;
   }
 }
 
@@ -473,40 +462,6 @@ async function exportSessionFiles(format = "md", sessionIdOverride = "") {
   setStatus(`Exported ${format.toUpperCase()} intake artifacts to ${payload.outputDir}.`);
 }
 
-function initMic() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) {
-    setStatus("Mic not supported in this browser.");
-    return null;
-  }
-  const recognition = new SR();
-  recognition.lang = "en-US";
-  recognition.interimResults = false;
-  recognition.continuous = true;
-  recognition.onresult = (event) => {
-    const result = event.results[event.results.length - 1];
-    if (!result?.[0]?.transcript) return;
-    const transcript = result[0].transcript.trim();
-    if (!transcript) return;
-    appendToConversationInput(transcript);
-    triggerMicSpeaking();
-    if (state.autoSendVoice) {
-      setStatus("Mic captured text. Auto-send queued...");
-      queueAutoSend();
-    } else {
-      setStatus("Mic captured text. Press Send Message when ready.");
-    }
-  };
-  recognition.onend = () => {
-    if (state.micActive) {
-      recognition.start();
-    }
-  };
-  return recognition;
-}
-
-let micRecognition = null;
-let autoSendTimer = null;
 let pendingAutoSend = false;
 let activeTurnController = null;
 let turnProgressTimer = null;
@@ -592,18 +547,6 @@ function stopTurnProgress(success = true) {
   }
 }
 
-function queueAutoSend() {
-  if (!state.autoSendVoice) return;
-  window.clearTimeout(autoSendTimer);
-  autoSendTimer = window.setTimeout(async () => {
-    try {
-      await sendConversationTurn();
-    } catch (error) {
-      setStatus(`Auto-send error: ${error.message}`);
-    }
-  }, 1100);
-}
-
 async function forceSendNow() {
   if (!state.sessionId) throw new Error("Start a session first.");
   const pendingText = el.conversationInput.value.trim();
@@ -613,39 +556,11 @@ async function forceSendNow() {
     activeTurnController.abort();
     setStatus("Forced current turn to stop. Sending latest text...");
     window.setTimeout(() => {
-      queueAutoSend();
+      sendConversationTurn().catch((error) => setStatus(`Force send error: ${error.message}`));
     }, 180);
     return;
   }
   await sendConversationTurn();
-}
-
-setInterval(() => {
-  if (!state.autoSendVoice) return;
-  if (sendConversationTurn._busy) return;
-  if (!state.sessionId) return;
-  const pendingText = el.conversationInput.value.trim();
-  if (!pendingText) return;
-  queueAutoSend();
-}, 1800);
-
-function toggleMic() {
-  if (!micRecognition) micRecognition = initMic();
-  if (!micRecognition) return;
-  state.micActive = !state.micActive;
-  if (state.micActive) {
-    micRecognition.start();
-    el.micBtn.classList.add("mic-live");
-    el.micBtn.setAttribute("aria-label", "Stop microphone");
-    el.micBtn.title = "Stop microphone";
-    setStatus("Mic listening.");
-  } else {
-    micRecognition.stop();
-    el.micBtn.classList.remove("mic-live");
-    el.micBtn.setAttribute("aria-label", "Start microphone");
-    el.micBtn.title = "Start microphone";
-    setStatus("Mic stopped.");
-  }
 }
 
 function buildPromptFromIntake() {
@@ -710,15 +625,6 @@ async function loadSkills() {
   state.skills = data.skills;
   renderSkills();
   setStatus(`Loaded ${data.skills.length} skills.`);
-}
-
-async function loadDefaults() {
-  const res = await fetch("/api/defaults");
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || "Failed to load defaults");
-  defaults.skillsDir = String(data.skillsDir || defaults.skillsDir || "");
-  defaults.cwd = String(data.workspace || defaults.cwd || "");
-  defaults.model = String(data.model || defaults.model || "gpt-5.3-codex");
 }
 
 async function loadModels(showSetupPrompt = false) {
@@ -803,7 +709,6 @@ async function openJob(id) {
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || "Failed to load job");
   state.selectedJobId = id;
-  state.selectedJobStatus = data.status || null;
   el.jobOutput.textContent = [
     `# ${data.id}`,
     `status=${data.status}`,
@@ -974,14 +879,6 @@ async function uploadFiles() {
 
 async function refreshAll() {
   try {
-    await loadDefaults();
-    if (!el.skillsDir.value.trim()) el.skillsDir.value = defaults.skillsDir;
-    if (!el.cwd.value.trim()) el.cwd.value = defaults.cwd;
-    if (!el.exportDir.value.trim()) el.exportDir.value = defaults.cwd;
-    if (!el.model.value.trim()) {
-      el.model.value = defaults.model;
-      syncModelInputs("model");
-    }
     await loadSkills();
     await loadModels(true);
     await loadJobs();
@@ -1110,27 +1007,11 @@ el.exportSessionBtn.addEventListener("click", async () => {
   }
 });
 
-el.micBtn.addEventListener("click", () => {
-  toggleMic();
-});
-
-el.autoSendVoice.addEventListener("change", () => {
-  state.autoSendVoice = el.autoSendVoice.checked;
-  if (!state.autoSendVoice) {
-    window.clearTimeout(autoSendTimer);
+el.clearDiagnosticsBtn?.addEventListener("click", () => {
+  diagnosticsLines.length = 0;
+  if (el.diagnosticsOutput) {
+    el.diagnosticsOutput.textContent = "No diagnostics yet.";
   }
-  localStorage.setItem("autoSendVoice", state.autoSendVoice ? "1" : "0");
-});
-
-el.micImageFile.addEventListener("change", () => {
-  const file = el.micImageFile.files?.[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    applyMicHeroImage(String(reader.result || ""));
-    setStatus("Mic hero image updated.");
-  };
-  reader.readAsDataURL(file);
 });
 
 el.browseSkillsDirBtn.addEventListener("click", async () => {
@@ -1233,41 +1114,20 @@ el.startChooseWorkspaceBtn.addEventListener("click", async () => {
   }
 });
 
-el.micImageQuick.addEventListener("change", () => {
-  const file = el.micImageQuick.files?.[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    applyMicHeroImage(String(reader.result || ""));
-    setStatus("Mic hero image updated.");
-  };
-  reader.readAsDataURL(file);
-});
-
 setInterval(async () => {
   try {
     await loadJobs();
-    if (state.selectedJobId) {
-      const selectedSummary = state.jobs.find((j) => j.id === state.selectedJobId);
-      const latestStatus = selectedSummary?.status || null;
-      if (latestStatus && latestStatus !== state.selectedJobStatus) {
-        await openJob(state.selectedJobId);
-      }
-    }
+    if (state.selectedJobId) await openJob(state.selectedJobId);
   } catch {
     // Keep polling silent.
   }
-}, 5000);
+}, 3000);
 
-el.skillsDir.value = "";
-el.cwd.value = "";
+el.skillsDir.value = defaults.skillsDir;
+el.cwd.value = defaults.cwd;
 el.model.value = defaults.model;
 syncModelInputs("model");
-el.exportDir.value = "";
-const savedMicImage = localStorage.getItem("micHeroImageDataUrl") || "";
-if (savedMicImage) applyMicHeroImage(savedMicImage);
-const savedAutoSend = localStorage.getItem("autoSendVoice") === "1";
-state.autoSendVoice = savedAutoSend;
-el.autoSendVoice.checked = savedAutoSend;
+el.exportDir.value = defaults.cwd;
+addDiagnosticLine("UI initialized.");
 renderUploadedFiles();
 refreshAll();

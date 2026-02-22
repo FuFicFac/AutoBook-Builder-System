@@ -1,8 +1,8 @@
-# Narrative System Deployment Blueprint
+# Auto Book Builder No Microphone
 
-Repository-ready documentation package for deploying and operating a local AI-assisted fiction pipeline:
+Repository-ready package for deploying and operating a local AI-assisted fiction pipeline with a browser GUI (no microphone/speech recognition):
 
-- Voice-first idea ingestion
+- Typed/pasted idea intake
 - Book Brain Builder (pre-production)
 - Dossier Evaluation Squad (validation)
 - Auto Book Builder (continuity-safe drafting)
@@ -11,7 +11,7 @@ Repository-ready documentation package for deploying and operating a local AI-as
 ## What This Repo Contains
 - `MASTER_BOOK_PIPELINE_SYSTEM_SPEC.md`: Complete canonical specification.
 - `PIPELINE_ARCHITECTURE.md`: End-to-end flow and stage responsibilities.
-- `frontend/`: `Auto Book Builder` local browser GUI (voice-first Codex CLI workflow).
+- `frontend/`: `Auto Book Builder No Microphone` local browser GUI (typed Codex CLI workflow).
 - `skills/`: Individual skill contracts.
 - `deployment/`: Setup, config, schemas, validation, acceptance.
 - `operations/`: Recovery, versioning, security, maintenance.
@@ -27,8 +27,7 @@ Repository-ready documentation package for deploying and operating a local AI-as
 ## Frontend Prerequisites (For Humans or AI Setup Agents)
 1. Node.js 18+ and npm installed.
 2. Codex CLI installed and authenticated locally.
-3. Local skill directory present (`~/codex/skills` by default, auto-detected).
-4. Browser microphone permission granted for voice intake.
+3. Local skill directory present (`/Users/lastresort/codex/skills` by default).
 5. Run and verify:
    - `cd frontend`
    - `npm install`
@@ -38,7 +37,7 @@ Repository-ready documentation package for deploying and operating a local AI-as
 ## One-Click Local Launcher (macOS)
 - Launcher docs: `docs/LOCAL_LAUNCHER_SETUP.md`
 - Start: `./launchers/macos/AutoBookBuilder.command`
-- App launcher: `launchers/macos/AutoBookBuilderLauncher.app` (Launchpad-friendly)
+- App launcher: `launchers/macos/AutoBookBuilderLauncher.app` (Launchpad-friendly; launches the no-microphone app variant in this repo)
 - Stop: `./launchers/macos/StopAutoBookBuilder.command`
 - Status: `./scripts/status-autobook.sh`
 - Rebuild app bundle: `./scripts/build-macos-launcher-app.sh`

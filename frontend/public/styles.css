@@ -535,6 +535,35 @@ pre {
   margin: 8px 0 0;
 }
 
+.diag-panel {
+  margin-top: 8px;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #070b10;
+  padding: 8px;
+}
+
+.diag-panel summary {
+  cursor: pointer;
+  color: var(--pop-blue);
+  font-weight: 700;
+}
+
+#diagnosticsOutput {
+  margin-top: 8px;
+  min-height: 96px;
+  max-height: 220px;
+  overflow: auto;
+  background: #05080c;
+  border: 1px solid #132132;
+  border-radius: 8px;
+  padding: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #dceaf7;
+}
+
 button:hover {
   filter: brightness(1.08);
 }
