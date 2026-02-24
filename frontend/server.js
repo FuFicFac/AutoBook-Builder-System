@@ -1,5 +1,6 @@
 import express from "express";
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import path from "node:path";
 import { execFile, spawn } from "node:child_process";
 import matter from "gray-matter";
@@ -42,6 +43,12 @@ const TEXT_FILE_EXTENSIONS = new Set([
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function getCodexBin() {
+  const macPath = "/Applications/Codex.app/Contents/Resources/codex";
+  if (fsSync.existsSync(macPath)) return macPath;
+  return "codex";
 }
 
 async function detectConfiguredModel() {
@@ -136,21 +143,21 @@ function buildBbbTurnPrompt(session, userText, recalledHistory = "") {
   const filesBlock =
     Array.isArray(session.attachedFilePaths) && session.attachedFilePaths.length
       ? [
-          "",
-          "Attached context files (read these first if relevant):",
-          ...session.attachedFilePaths.map((p) => `- ${p}`)
-        ].join("\n")
+        "",
+        "Attached context files (read these first if relevant):",
+        ...session.attachedFilePaths.map((p) => `- ${p}`)
+      ].join("\n")
       : "";
   const extractedContextBlock =
     Array.isArray(session.extractedContexts) && session.extractedContexts.length
       ? [
-          "",
-          "Extracted text context from uploaded files:",
-          ...session.extractedContexts.map(
-            (c, idx) =>
-              `### Source ${idx + 1}: ${c.file}\nPath: ${c.path}\nExcerpt:\n${c.excerpt || "(empty)"}`
-          )
-        ].join("\n")
+        "",
+        "Extracted text context from uploaded files:",
+        ...session.extractedContexts.map(
+          (c, idx) =>
+            `### Source ${idx + 1}: ${c.file}\nPath: ${c.path}\nExcerpt:\n${c.excerpt || "(empty)"}`
+        )
+      ].join("\n")
       : "";
   return [
     "You are the Book Brain Builder interviewer in a local fiction pipeline.",
@@ -223,7 +230,7 @@ function runCodexExec(cwd, model, prompt, timeoutMs = 120000) {
       args.push("-m", String(model).trim());
     }
     args.push(prompt);
-    const child = spawn("codex", args, { cwd: String(cwd), env: process.env });
+    const child = spawn(getCodexBin(), args, { cwd: String(cwd), env: process.env });
     let stdout = "";
     let stderr = "";
     let timedOut = false;
@@ -714,7 +721,7 @@ app.get("/api/onboarding/status", async (req, res) => {
     skillsDirExists = false;
   }
 
-  const versionCheck = await runCommandCapture("codex", ["--version"], cwd, 10000);
+  const versionCheck = await runCommandCapture(getCodexBin(), ["--version"], cwd, 10000);
   codexInstalled = versionCheck.ok || versionCheck.code !== null;
   codexVersion = String(versionCheck.stdout || versionCheck.stderr || "")
     .split("\n")[0]
@@ -1065,12 +1072,12 @@ app.post("/api/session/:id/message", async (req, res) => {
     : [];
   const extractedContexts = Array.isArray(req.body?.extractedContexts)
     ? req.body.extractedContexts
-        .map((x) => ({
-          file: String(x?.file || ""),
-          path: String(x?.path || ""),
-          excerpt: String(x?.excerpt || "").slice(0, 3000)
-        }))
-        .filter((x) => x.file || x.path || x.excerpt)
+      .map((x) => ({
+        file: String(x?.file || ""),
+        path: String(x?.path || ""),
+        excerpt: String(x?.excerpt || "").slice(0, 3000)
+      }))
+      .filter((x) => x.file || x.path || x.excerpt)
     : [];
   if (!userText) return res.status(400).json({ error: "text is required." });
   if (attachedFilePaths.length) {
