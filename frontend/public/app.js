@@ -22,6 +22,7 @@ const el = {
   skillsList: document.getElementById("skillsList"),
   startSessionBtn: document.getElementById("startSessionBtn"),
   launchAbbBtn: document.getElementById("launchAbbBtn"),
+  micBtn: document.getElementById("micBtn"),
   evaluateBtn: document.getElementById("evaluateBtn"),
   masterSaveBtn: document.getElementById("masterSaveBtn"),
   sessionMeta: document.getElementById("sessionMeta"),
@@ -29,6 +30,7 @@ const el = {
   conversationInput: document.getElementById("conversationInput"),
   sendConversationBtn: document.getElementById("sendConversationBtn"),
   forceSendBtn: document.getElementById("forceSendBtn"),
+  autoSendVoice: document.getElementById("autoSendVoice"),
   evalProgress: document.getElementById("evalProgress"),
   evalProgressCircle: document.getElementById("evalProgressCircle"),
   evalProgressText: document.getElementById("evalProgressText"),
@@ -37,6 +39,10 @@ const el = {
   turnProgressText: document.getElementById("turnProgressText"),
   diagnosticsOutput: document.getElementById("diagnosticsOutput"),
   clearDiagnosticsBtn: document.getElementById("clearDiagnosticsBtn"),
+  micHeroImage: document.getElementById("micHeroImage"),
+  micGlyph: document.getElementById("micGlyph"),
+  micImageFile: document.getElementById("micImageFile"),
+  micImageQuick: document.getElementById("micImageQuick"),
   exportDir: document.getElementById("exportDir"),
   exportSessionBtn: document.getElementById("exportSessionBtn"),
   sessionResetModal: document.getElementById("sessionResetModal"),
@@ -81,13 +87,18 @@ const state = {
   uploadedPaths: [],
   extractedContexts: [],
   sessionId: null,
-  readiness: 0
+  readiness: 0,
+  micActive: false,
+  autoSendVoice: false
 };
 const MAX_TURN_CHARS = 2200;
 const TURN_REQUEST_TIMEOUT_MS = 240000;
 const EVAL_REQUEST_TIMEOUT_MS = 300000;
 const ONBOARDING_ACK_KEY = "autobookOnboardingAck";
 const diagnosticsLines = [];
+let micLastStartAt = 0;
+let micRestartBackoffUntil = 0;
+let micInterimPreview = "";
 
 function addDiagnosticLine(message, level = "info") {
   const stamp = new Date().toLocaleTimeString();
@@ -280,6 +291,27 @@ async function startSessionFlow(useChooser = false) {
   setStatus(`Session workspace prepared at ${prepPayload.cwd}`);
 }
 
+function applyMicHeroImage(dataUrl) {
+  const value = String(dataUrl || "").trim();
+  if (!value) {
+    el.micHeroImage.removeAttribute("src");
+    el.micBtn.classList.remove("mic-photo-loaded");
+    localStorage.removeItem("micHeroImageDataUrl");
+    return;
+  }
+  el.micHeroImage.src = value;
+  el.micBtn.classList.add("mic-photo-loaded");
+  localStorage.setItem("micHeroImageDataUrl", value);
+}
+
+function triggerMicSpeaking() {
+  el.micBtn.classList.add("mic-speaking");
+  window.clearTimeout(triggerMicSpeaking._timer);
+  triggerMicSpeaking._timer = window.setTimeout(() => {
+    el.micBtn.classList.remove("mic-speaking");
+  }, 420);
+}
+
 function applyExtractedIntake(intake) {
   if (!intake) return false;
   let changed = false;
@@ -391,7 +423,10 @@ async function sendConversationTurn(textOverride = "") {
     if (turnProgressTimer) {
       stopTurnProgress(true);
     }
-    pendingAutoSend = false;
+    if (state.autoSendVoice && (pendingAutoSend || el.conversationInput.value.trim())) {
+      pendingAutoSend = false;
+      queueAutoSend();
+    }
   }
 }
 
@@ -462,6 +497,111 @@ async function exportSessionFiles(format = "md", sessionIdOverride = "") {
   setStatus(`Exported ${format.toUpperCase()} intake artifacts to ${payload.outputDir}.`);
 }
 
+function initMic() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    addDiagnosticLine("Web Speech API not supported in this browser.", "error");
+    setStatus("Mic not supported in this browser.");
+    return null;
+  }
+  addDiagnosticLine(`Web Speech API detected (${window.webkitSpeechRecognition ? "webkit" : "standard"}).`);
+  const recognition = new SR();
+  recognition.lang = "en-US";
+  recognition.interimResults = true;
+  recognition.continuous = false;
+  recognition.maxAlternatives = 1;
+  recognition.onstart = () => {
+    micLastStartAt = Date.now();
+    micInterimPreview = "";
+    addDiagnosticLine("Microphone recognition started.");
+  };
+  recognition.onresult = (event) => {
+    let finalText = "";
+    let interimText = "";
+    const startIdx = Number.isInteger(event.resultIndex) ? event.resultIndex : 0;
+    for (let i = startIdx; i < event.results.length; i += 1) {
+      const result = event.results[i];
+      const transcript = result?.[0]?.transcript?.trim();
+      if (!transcript) continue;
+      if (result.isFinal) {
+        finalText += (finalText ? " " : "") + transcript;
+      } else {
+        interimText += (interimText ? " " : "") + transcript;
+      }
+    }
+
+    if (interimText && interimText !== micInterimPreview) {
+      micInterimPreview = interimText;
+      addDiagnosticLine(`Mic interim: ${interimText.slice(0, 120)}`);
+      setStatus(`Mic hearing: ${interimText.slice(0, 80)}${interimText.length > 80 ? "..." : ""}`);
+    }
+
+    if (finalText) {
+      micInterimPreview = "";
+      addDiagnosticLine(`Mic transcript chunk (${finalText.length} chars): ${finalText.slice(0, 120)}`);
+      appendToConversationInput(finalText);
+      triggerMicSpeaking();
+      if (state.autoSendVoice) {
+        if (hasSessionId()) {
+          setStatus("Mic captured text. Auto-send queued...");
+          queueAutoSend("mic-final");
+        } else {
+          addDiagnosticLine("Mic captured text but no session is active; auto-send skipped.", "warn");
+          setStatus("Transcript captured, but no session is started. Click Start Session to send.");
+        }
+      } else {
+        setStatus(
+          hasSessionId()
+            ? "Mic captured text. Press Send Message when ready."
+            : "Transcript captured. Start a session, then send when ready."
+        );
+      }
+    }
+  };
+  recognition.onerror = (event) => {
+    const code = event?.error || "unknown";
+    addDiagnosticLine(`Microphone recognition error: ${code}`, "error");
+    if (code === "not-allowed" || code === "service-not-allowed") {
+      state.micActive = false;
+      el.micBtn.classList.remove("mic-live");
+      el.micBtn.setAttribute("aria-label", "Start microphone");
+      el.micBtn.title = "Start microphone";
+      setStatus("Microphone permission blocked in browser.");
+      return;
+    }
+    if (code === "no-speech") {
+      setStatus("Mic heard no speech. Listening will retry.");
+      return;
+    }
+    if (code === "aborted" && !state.micActive) {
+      return;
+    }
+    setStatus(`Microphone error: ${code}`);
+  };
+  recognition.onend = () => {
+    addDiagnosticLine(`Microphone recognition ended. micActive=${state.micActive ? "true" : "false"}`);
+    if (state.micActive) {
+      const now = Date.now();
+      if (now < micRestartBackoffUntil) return;
+      if (now - micLastStartAt < 500) {
+        micRestartBackoffUntil = now + 400;
+      }
+      try {
+        recognition.start();
+      } catch (error) {
+        addDiagnosticLine(`Microphone restart failed: ${error.message}`, "error");
+        if (/already started|InvalidStateError/i.test(String(error?.message || ""))) {
+          return;
+        }
+        setStatus(`Microphone restart error: ${error.message}`);
+      }
+    }
+  };
+  return recognition;
+}
+
+let micRecognition = null;
+let autoSendTimer = null;
 let pendingAutoSend = false;
 let activeTurnController = null;
 let turnProgressTimer = null;
@@ -547,6 +687,32 @@ function stopTurnProgress(success = true) {
   }
 }
 
+function queueAutoSend(reason = "unknown") {
+  if (!state.autoSendVoice) return;
+  const pendingText = el.conversationInput.value.trim();
+  if (!pendingText) return;
+  if (!hasSessionId()) {
+    addDiagnosticLine(`Auto-send skipped (${reason}): no active session.`, "warn");
+    setStatus("Auto-send is on, but no session is started yet.");
+    return;
+  }
+  window.clearTimeout(autoSendTimer);
+  addDiagnosticLine(`Auto-send queued (${reason}).`);
+  autoSendTimer = window.setTimeout(async () => {
+    try {
+      if (!hasSessionId()) {
+        addDiagnosticLine("Auto-send canceled: session missing at send time.", "warn");
+        setStatus("Auto-send canceled because no session is active.");
+        return;
+      }
+      await sendConversationTurn();
+    } catch (error) {
+      addDiagnosticLine(`Auto-send failed: ${error.message}`, "error");
+      setStatus(`Auto-send error: ${error.message}`);
+    }
+  }, 1100);
+}
+
 async function forceSendNow() {
   if (!state.sessionId) throw new Error("Start a session first.");
   const pendingText = el.conversationInput.value.trim();
@@ -556,11 +722,53 @@ async function forceSendNow() {
     activeTurnController.abort();
     setStatus("Forced current turn to stop. Sending latest text...");
     window.setTimeout(() => {
-      sendConversationTurn().catch((error) => setStatus(`Force send error: ${error.message}`));
+      queueAutoSend("force-send-after-abort");
     }, 180);
     return;
   }
   await sendConversationTurn();
+}
+
+setInterval(() => {
+  if (!state.autoSendVoice) return;
+  if (sendConversationTurn._busy) return;
+  if (!state.sessionId) return;
+  const pendingText = el.conversationInput.value.trim();
+  if (!pendingText) return;
+  queueAutoSend("heartbeat");
+}, 1800);
+
+function toggleMic() {
+  state.micActive = !state.micActive;
+  addDiagnosticLine(`Mic toggle requested. active=${state.micActive ? "true" : "false"}`);
+  if (!micRecognition) micRecognition = initMic();
+  if (!micRecognition) {
+    state.micActive = false;
+    return;
+  }
+  if (state.micActive) {
+    try {
+      micRecognition.start();
+      el.micBtn.classList.add("mic-live");
+      el.micBtn.setAttribute("aria-label", "Stop microphone");
+      el.micBtn.title = "Stop microphone";
+      setStatus("Mic listening.");
+    } catch (error) {
+      state.micActive = false;
+      addDiagnosticLine(`Microphone start failed: ${error.message}`, "error");
+      setStatus(`Microphone start error: ${error.message}`);
+    }
+  } else {
+    try {
+      micRecognition.stop();
+    } catch (error) {
+      addDiagnosticLine(`Microphone stop error: ${error.message}`, "error");
+    }
+    el.micBtn.classList.remove("mic-live");
+    el.micBtn.setAttribute("aria-label", "Start microphone");
+    el.micBtn.title = "Start microphone";
+    setStatus("Mic stopped.");
+  }
 }
 
 function buildPromptFromIntake() {
@@ -1007,11 +1215,34 @@ el.exportSessionBtn.addEventListener("click", async () => {
   }
 });
 
+el.micBtn.addEventListener("click", () => {
+  toggleMic();
+});
+
 el.clearDiagnosticsBtn?.addEventListener("click", () => {
   diagnosticsLines.length = 0;
   if (el.diagnosticsOutput) {
     el.diagnosticsOutput.textContent = "No diagnostics yet.";
   }
+});
+
+el.autoSendVoice.addEventListener("change", () => {
+  state.autoSendVoice = el.autoSendVoice.checked;
+  if (!state.autoSendVoice) {
+    window.clearTimeout(autoSendTimer);
+  }
+  localStorage.setItem("autoSendVoice", state.autoSendVoice ? "1" : "0");
+});
+
+el.micImageFile.addEventListener("change", () => {
+  const file = el.micImageFile.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    applyMicHeroImage(String(reader.result || ""));
+    setStatus("Mic hero image updated.");
+  };
+  reader.readAsDataURL(file);
 });
 
 el.browseSkillsDirBtn.addEventListener("click", async () => {
@@ -1114,6 +1345,17 @@ el.startChooseWorkspaceBtn.addEventListener("click", async () => {
   }
 });
 
+el.micImageQuick.addEventListener("change", () => {
+  const file = el.micImageQuick.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    applyMicHeroImage(String(reader.result || ""));
+    setStatus("Mic hero image updated.");
+  };
+  reader.readAsDataURL(file);
+});
+
 setInterval(async () => {
   try {
     await loadJobs();
@@ -1128,6 +1370,11 @@ el.cwd.value = defaults.cwd;
 el.model.value = defaults.model;
 syncModelInputs("model");
 el.exportDir.value = defaults.cwd;
+const savedMicImage = localStorage.getItem("micHeroImageDataUrl") || "";
+if (savedMicImage) applyMicHeroImage(savedMicImage);
+const savedAutoSend = localStorage.getItem("autoSendVoice") === "1";
+state.autoSendVoice = savedAutoSend;
+el.autoSendVoice.checked = savedAutoSend;
 addDiagnosticLine("UI initialized.");
 renderUploadedFiles();
 refreshAll();

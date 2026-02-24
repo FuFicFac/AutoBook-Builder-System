@@ -3,24 +3,32 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Auto Book Builder No Microphone</title>
+    <title>Auto Book Builder</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <main class="app">
       <header>
-        <h1>Auto Book Builder No Microphone</h1>
-        <p>Type-first story intake with Codex CLI as the local brain.</p>
+        <h1>Auto Book Builder</h1>
+        <p>Voice-first story intake with Codex CLI as the local brain.</p>
       </header>
 
       <section class="panel">
         <h2>Start Your Story Session</h2>
         <div class="hero">
           <div class="mic-stage">
-            <div class="mic-orb mic-orb-static" aria-hidden="true">
-              <span class="mic-glyph">✍️</span>
-            </div>
-            <p class="muted">No-microphone edition: type or paste your story idea below.</p>
+            <button id="micBtn" type="button" class="mic-orb" aria-label="Toggle microphone">
+              <img id="micHeroImage" class="mic-photo" alt="Microphone" />
+              <span id="micGlyph" class="mic-glyph">🎙</span>
+              <span class="voice-bars" aria-hidden="true">
+                <i></i><i></i><i></i><i></i>
+              </span>
+            </button>
+            <label class="hero-upload">
+              Use Your Mic Image
+              <input id="micImageQuick" type="file" accept="image/*" />
+            </label>
+            <p class="muted">Tap the mic and talk your story out loud.</p>
           </div>
           <div class="actions hero-primary-actions">
             <button id="startSessionBtn" type="button">Start Session</button>
@@ -61,6 +69,10 @@
               ></textarea>
             </label>
             <div class="actions">
+              <label class="inline">
+                <input id="autoSendVoice" type="checkbox" />
+                Auto-send voice turns
+              </label>
               <button id="sendConversationBtn" type="button">Send Message</button>
               <button id="forceSendBtn" type="button" class="secondary">Force Send Now</button>
             </div>
@@ -110,6 +122,10 @@
             <label class="inline">
               <input id="includeSystem" type="checkbox" />
               Include `.system` skills
+            </label>
+            <label>
+              Mic Hero Image
+              <input id="micImageFile" type="file" accept="image/*" />
             </label>
           </div>
           <div class="grid">
