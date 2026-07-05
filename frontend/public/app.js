@@ -75,8 +75,8 @@ const el = {
 };
 
 const defaults = {
-  skillsDir: "/Users/lastresort/codex/skills",
-  cwd: "/Volumes/New Home/Crucial Backup /Codex/Gassian-Blender-MCP",
+  skillsDir: "",
+  cwd: "",
   model: "gpt-5.3-codex"
 };
 

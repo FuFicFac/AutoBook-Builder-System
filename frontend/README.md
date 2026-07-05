@@ -12,7 +12,7 @@ Local browser UI for a voice-first narrative workflow using Codex CLI as the loc
 ## Prerequisites
 - Node.js 18+ and npm.
 - Codex CLI installed and authenticated (`codex login`).
-- Local skill directory available at `/Users/lastresort/codex/skills` or your custom path.
+- Local skill directory available at `~/codex/skills` (or your custom path; override with the `CODEX_SKILLS_DIR` environment variable).
 - Browser with microphone support (Chrome recommended for Web Speech API).
 
 ## Run locally

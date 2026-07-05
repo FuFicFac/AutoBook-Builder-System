@@ -27,7 +27,7 @@ Repository-ready package for deploying and operating a local AI-assisted fiction
 ## Frontend Prerequisites (For Humans or AI Setup Agents)
 1. Node.js 18+ and npm installed.
 2. Codex CLI installed and authenticated locally.
-3. Local skill directory present (`/Users/lastresort/codex/skills` by default).
+3. Local skill directory present (`~/codex/skills` by default; override with the `CODEX_SKILLS_DIR` environment variable).
 5. Run and verify:
    - `cd frontend`
    - `npm install`

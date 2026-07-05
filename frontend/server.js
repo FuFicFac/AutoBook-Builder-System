@@ -16,8 +16,9 @@ const upload = multer({ storage: multer.memoryStorage() });
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(process.cwd(), "public")));
 
-const DEFAULT_SKILLS_DIR = "/Users/lastresort/codex/skills";
-const DEFAULT_WORKSPACE = "/Volumes/New Home/Crucial Backup /Codex/Gassian-Blender-MCP";
+const DEFAULT_SKILLS_DIR =
+  process.env.CODEX_SKILLS_DIR || path.join(process.env.HOME || "", "codex", "skills");
+const DEFAULT_WORKSPACE = process.env.CODEX_WORKSPACE || process.cwd();
 const MAX_LOG_CHARS = 250000;
 const MAX_SESSION_MESSAGES = 16;
 const MAX_RETRIEVED_SNIPPETS = 8;
